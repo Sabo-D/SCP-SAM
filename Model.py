@@ -8,7 +8,7 @@ from src.new.SRA import StructureRefinementAdapter
 from src.new.SCPR import StructureConditionedPrototypeRecalibrator
 from src.new.BSH import BoundaryStructureHead
 
-class SCPSAM(nn.Module):
+class PVSAM(nn.Module):
     def __init__(
         self,
         sam_checkpoint,
@@ -17,6 +17,7 @@ class SCPSAM(nn.Module):
         base_channels=48,
         inject_layers=None,
         prompt_alpha_init=0.01,
+        freeze_image_encoder = True,
         freeze_mask_decoder=True,
         freeze_prompt_encoder=True,
         use_scpr=True,
@@ -73,6 +74,10 @@ class SCPSAM(nn.Module):
             hidden_channels=32,
         )
 
+        if freeze_image_encoder:
+            for p in self.sam.image_encoder.parameters():
+                p.requires_grad = False
+
         if freeze_mask_decoder:
             for p in self.sam.mask_decoder.parameters():
                 p.requires_grad = False
@@ -85,7 +90,7 @@ class SCPSAM(nn.Module):
         # 1. PSE
         # b4:  [B, C, H/4,  W/4]
         # b16: [B, C, H/16, W/16]
-        b4, b16, detail, var, aniso = self.structure_encoder(image_rgb)
+        b4, b16, D, P, R = self.structure_encoder(image_rgb)
 
         # 2. SRA
         # d4:  [B, C, H/4,  W/4]
@@ -112,12 +117,16 @@ class SCPSAM(nn.Module):
             prompt=prompt,
         )
 
+        SCPR_before = image_embeddings
+
         # 5. 用 SRA 的 d16 做 SCPR 语义重校准
         if self.use_scpr:
-            image_embeddings, pos, neg = self.scpr(
+            image_embeddings, pos, neg, C = self.scpr(
                 fs=image_embeddings,
                 fd=d16,
             )
+
+        SCPR_after = image_embeddings
 
         batch_size = image_sam.shape[0]
 
